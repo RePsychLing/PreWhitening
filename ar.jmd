@@ -1,0 +1,162 @@
+---
+title: "AR(p) auto-correlated trials with LMMs"
+author: "H. Matuschek"
+date: 2020-02-13
+---
+
+```julia
+using LinearAlgebra
+using BenchmarkTools
+using BandedMatrices: pbtrf!
+include("ar.jl")
+```
+
+# Intro
+Consider the observed stationary $AR(p)$ process
+$$
+ x_n = \phi_1\,x_{n-1} + \cdots + \phi_p\,x_{n-p} + \epsilon_n = \sum_{i=1}^p\phi_ix_{n-i}+\epsilon_n\,,
+$$
+where $E[\epsilon_n] = 0$ and $E[\epsilon_n\,\epsilon_m] = \sigma^2\delta_{n,m}$.
+
+The observed process is a convolution of noise with a filter-kernel $\phi_{-i}$. The associated
+de-convolution operation can be expressed as
+$$
+ \epsilon_n = x_n - \sum_{i=1}^p\phi_ix_{n-i}
+$$
+with $\phi_0=-1$, one obtains
+$$
+ \epsilon_n = \sum_{i=0}^p-\phi_i\,x_{n-i}\,.
+$$
+
+To this end, the de-convolution/whitening of the process is performed by a matrix $F_{n,i}$ of the
+form
+$$
+ F_{n,i} = \begin{cases} 0 & i>n \\ 1 & i=n \\ -\phi_{n-i} & (n-p)\le i < n \\  0 & i < (n-p)\end{cases}
+$$
+
+As a brief side note: Please observe that
+$$
+ E[\epsilon_n\,\epsilon_m] = F_{n,i}\, \underbrace{E[x_i\,x_j]}_{: = \Gamma_{i,j}}\, \left(F_{m,j}\right)^T: =\sigma^2\mathbb{1}
+$$
+
+This leads directly to a problem whitening the first $p$ samples of an stationary process in
+steady-state. To derive the first whitened sample, the unobserved past $p-1$ samples must be known.
+That is,
+$$
+ \epsilon_1 = x_1 - \underbrace{\sum_{i=1}^p \phi_i\,x_{1-i}}_{\text{unknown}}\,.
+$$
+
+Ignoring these contributions of the unobserved past will result in an pre-whitening under the
+implicit assumption that $x_{i}=0\,\forall i\le 0$.
+
+```julia
+ϕ = [0.5]
+F(5, ϕ, false)
+```
+
+# Concrete Example $AR(1)$
+To demonstrate the issue, consider the explicit example of an $AR(1)$ process
+$$
+ x_n = \phi x_{n-1} + \epsilon_n
+$$
+
+The whitening matrix $F$ would be
+$$
+ F = \left(\begin{array}{cccccc}
+   1 & 0 & 0 & 0 & \cdots & 0 \\
+   -\phi & 1 & 0 & 0 &\cdots & 0 \\
+   0 & -\phi & 1 & 0 &\cdots & 0 \\
+   \vdots & & \ddots & \ddots &  & \vdots\\
+   0 & \cdots & 0 & -\phi & 1 & 0 \\
+   0 & 0 & \cdots & 0 & -\phi & 1
+   \end{array}\right)
+$$
+
+Again, simply multiplying the vector of observations $\vec x$ on $F$ from the left would imply
+the assumption that $x_{0}=0$.
+
+Under the assumption of an stationary GP in steady state, the auto-correlation of the process is
+fully specifies by the auto-correlation function. For an $AR(1)$-process with $0<\phi_1<1$ this
+auto-correlation can be obtained by means of the Youle-Walker equations as
+$$
+ \rho(0) = 1,\quad \rho(n) = \phi\,\rho(n-1)\Rightarrow \rho(n) = \phi^n\,.
+$$
+With this, the covariance matrix of the process in steady-state can be obtained explicitly as
+$$
+  \Gamma = \left(\begin{array}{ccccc}
+   1 & \phi & \phi^2 & \phi^3 &  \\
+   \phi & 1 & \phi & \phi^2 & \ddots  \\
+   \phi^2 & \phi & 1 & \phi & \ddots  \\
+   \phi^3 & \phi^2 & \phi & 1 & \ddots  \\
+   & \ddots &  \ddots & \ddots & \ddots
+   \end{array}\right)
+$$
+
+
+With the relation observed above, one should find
+$$
+ \mathbb 1_{n,m} = F_{n,i}\,\Gamma_{i,j}\left(F_{m,j}\right)^T
+$$
+
+```julia
+f = F(5, ϕ, false)
+Γ = Γ_ar(5, ϕ)
+E = Symmetric(BandedMatrix(f * Γ * transpose(f), (length(ϕ),length(ϕ))))
+map(x->round(x,digits=2),E)
+```
+
+The *mistakes* are limited to a band with band-width equal to the order of the
+process $p$. This relatively sparse matrix can then be factored and used to *update*
+the whitening matrix $F$.
+
+```julia
+E = cholesky(E);
+fc = E.L \ Matrix(f);
+map(x->round(x,digits=5), fc * Γ * transpose(fc))
+```
+
+```julia
+fc
+```
+
+This correction is implemented inside the $F$ function when the *correction* argument is set to
+true (default). Thus
+```julia
+f = F(5, ϕ)
+(f * Γ * transpose(f))
+```
+yields the correct whitening matrix immediately.
+
+# Example for an AR(3)
+```julia
+n = 10
+ϕ = [0.5, -0.25]
+f = F(n, ϕ)
+map(x->round(x,digits=2), f)
+```
+
+```julia
+E = f * Γ_ar(n, ϕ) * transpose(f)
+map(x->round(x,digits=5), E)
+```
+
+# Brief benchmark
+Proper benchmarking is hard! Consider this as an example on how not to benchmark:
+```julia
+n = 1000
+ϕ = [0.5, -0.25, 0.1]
+@benchmark F(n, ϕ)
+@benchmark F(n, ϕ, false)
+
+f = F(n, ϕ, false)
+p = length(ϕ)
+@benchmark Γ_ar(n, ϕ)
+G = Γ_ar(n, ϕ)
+@benchmark Symmetric(f * G * transpose(f))
+
+Ef = Symmetric(f * G * transpose(f))
+Eb = Symmetric(BandedMatrix(Ef, (p,p)))
+
+@benchmark cholesky(Ef)
+@benchmark cholesky(Eb)
+```
