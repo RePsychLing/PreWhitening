@@ -37,7 +37,7 @@ $$
 Usually, $\Gamma$ will be relatively dense and usually of full rank. In numerical terms: it is
 an *expensive* matrix.
 
-*Pre-whitening*, now, is the black-magic that turns that $\Gamma$-matrix back into a unit matrix.
+*Pre-whitening*, now, is the black magic that turns the $\Gamma$-matrix back into a unit matrix.
 That is, we search for a matrix $W_{\vec \theta}$ that we throw on the LMM and data
 $$
 W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec\beta +
@@ -45,15 +45,23 @@ W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec\beta +
    \sigma^2W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T\right)\quad \text{with }
 \vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
-such that $\mathbb{1} = W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T$.
+such that $\mathbb{1} = W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T$. In fact this is
+quiet easy to do: The so-called Cholesky factorization $L\,L^T = \Gamma$ provides a
+lower-triangular matrix $L$ and with $W = L^{-1}$, that is the inverse of $L$, one can immediately
+turn $\Gamma$ back into a unit matrix $\mathbb{1} = L^{-1}\,\Gamma\,L^{-T}$.
 
+Depending on the underlying process, the covariance matrix $\Gamma$ or its Cholesky factor $L$
+might be dense and irregularly structured. In these cases, the Cholesky decomposition and inversion
+of $L$ might be slow. However, in some cases there will be no other option to perform the
+pre-whitening by means of Cholesky factorization of the complete covariance matrix. For example
+whenever samples are taken irregularly of if samples are missing.
 
 # Mathematical introduction
-Unsurprisingly, this matrix cannot be obtained in general without any assumptions about the
+Unsurprisingly, the covariance matrix $\Gamma$ cannot be obtained in general without any assumptions about the
 underlying process that generated these correlated samples. A frequent choice for such a random
 process are *auto-regressive* processes. A so-called auto-regressive process of order $p$ (in short
 $AR(p)$-process) describes the time-series in terms of a linear combination of its own past of $p$
-step plus additive noise
+steps and some additive noise
 $$
  x_n = \phi_1\,x_{n-1} + \cdots + \phi_p\,x_{n-p} + \epsilon_n = \sum_{i=1}^p\phi_ix_{n-i}+\epsilon_n\,,
 $$
@@ -75,13 +83,16 @@ form
 $$
  W_{n,i} = \begin{cases} 0 & i>n \\ 1 & i=n \\ -\phi_{n-i} & (n-p)\le i < n \\  0 & i < (n-p)\end{cases}
 $$
+This is a very sparse matrix containing only up to $p$ sub-diagonals! To this end, using this sparse
+pre-whitening matrix would allow for an incredible fast pre-whitening of the data in $O(p\,n)$, that
+is in linear time.
 
 As a brief side note: Please observe that
 $$
  E[\epsilon_n\,\epsilon_m] = W_{n,i}\, \underbrace{E[x_i\,x_j]}_{: = \Gamma_{i,j}}\, \left(W_{m,j}\right)^T: =\sigma^2\mathbb{1}
 $$
 
-This leads directly to a problem whitening the first $p$ samples of an stationary process in
+This leads directly to a problem whitening the first $p$ samples of a stationary $AR(p)$ process in
 steady-state. To derive the first whitened sample, the unobserved past $p-1$ samples must be known.
 That is,
 $$
@@ -89,12 +100,10 @@ $$
 $$
 
 Ignoring these contributions of the unobserved past will result in an pre-whitening under the
-implicit assumption that $x_{i}=0\,\forall i\le 0$.
-
-```julia
-ϕ = [0.5]
-W(5, ϕ, false)
-```
+implicit assumption that $x_{i}=0\,\forall i\le 0$. This is almost never the case. Moreover, the
+covariance of the process $\Gamma$ was derived under the assumption of an stationary
+$AR(p)$-process in steady-state. The implicit assumption of $x_{i}=0\,\forall i\le 0$ breaks the
+assumption of a steady state.
 
 # Concrete Example $AR(1)$
 To demonstrate the issue, consider the explicit example of an $AR(1)$ process
@@ -123,7 +132,8 @@ auto-correlation can be obtained by means of the Yule-Walker equations as
 $$
  \rho(0) = 1,\quad \rho(n) = \phi\,\rho(n-1)\Rightarrow \rho(n) = \phi^n\,.
 $$
-With this, the covariance matrix of the process in steady-state can be obtained explicitly as
+With this, the covariance matrix of the process in steady-state can be obtained explicitly as a
+symmetric Toeplitz matrix
 $$
   \Gamma = \left(\begin{array}{ccccc}
    1 & \phi & \phi^2 & \phi^3 &  \\
@@ -134,34 +144,36 @@ $$
    \end{array}\right)
 $$
 
-
 With the relation observed above, one should find
 $$
  \mathbb 1_{n,m} = W_{n,i}\,\Gamma_{i,j}\left(W_{m,j}\right)^T
 $$
 
 ```julia
+ϕ = [0.5]
 w = W(5, ϕ, false)
 Γ = Γ_ar(5, ϕ)
 E = Symmetric(BandedMatrix(w * Γ * transpose(w), (length(ϕ),length(ϕ))))
 map(x->round(x,digits=2), E)
 ```
-
-The *mistakes* are limited to a band with band-width equal to the order of the
-process $p$. This relatively sparse matrix can then be factored and used to *update*
-the whitening matrix $F$.
+Obviously, this is not the case. These *mistakes*, however, are limited to a band with band-width
+equal to the order of the process $p$. This relatively sparse matrix can then be factored and used
+to *update* the whitening matrix $F$.
 
 ```julia
 E = cholesky(E);
 wc = E.L \ Matrix(w);
 map(x->round(x,digits=5), wc * Γ * transpose(wc))
 ```
+This Cholesky decomposition differs from the decomposition of the covariance matrix $\Gamma$. While
+the covariance matrix is frequently dense, the *error* matrix $E$ here is banded matrix with
+band-width of max. $p$. This allows for a very efficient decomposition. In fact the asymptotic
+complexity of this Cholesky decomposition is $O(n\,p^2)$ and thus linear in the number of samples.
+This scales much better compared to $O(n^3)$ for a decomposition of an arbitrary symmetric dense
+$\Gamma$ and even better than the complexity $O(n^2)$ of performing the decomposition of a Toeplitz
+matrix as it would arise in case of a $AR(p)$ process.
 
-```julia
-wc
-```
-
-This correction is implemented inside the $F$ function when the *correction* argument is set to
+This correction is implemented inside the $W()$-function when the *stationary* argument is set to
 true (default). Thus
 ```julia
 w = W(5, ϕ)
@@ -169,15 +181,16 @@ w = W(5, ϕ)
 ```
 yields the correct whitening matrix immediately.
 
-# Example for an AR(3)
+## Brief example for an $AR(3)$
 ```julia
-n = 10
-ϕ = [0.5, -0.25]
-w = W(n, ϕ)
-map(x->round(x,digits=2), w)
+ϕ = [0.5, -0.25, 0.1];
+w = W(5, ϕ, false);
+Γ = Γ_ar(5, ϕ);
+E = Symmetric(BandedMatrix(w * Γ * transpose(w), (length(ϕ),length(ϕ))));
+map(x->round(x,digits=2), E)
 ```
-
 ```julia
-E = w * Γ_ar(n, ϕ) * transpose(w)
-map(x->round(x,digits=5), E)
+E = cholesky(E);
+wc = E.L \ Matrix(w);
+map(x->round(x,digits=5), wc * Γ * transpose(wc))
 ```
