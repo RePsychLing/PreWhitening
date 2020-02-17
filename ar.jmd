@@ -18,10 +18,10 @@ lme4::sleepstudy dataset.
 
 A *normal* LMM describes the data $\vec y$ in terms of a multivariate Gaussian distribution. That is,
 $$
-\vec y \sim \mathcal{N}\left(Z\,\vec\beta +  F\,\vec b, \sigma^2\mathbb{1}\right)\quad \text{with }
-\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+\vec y \sim \mathcal{N}\left(Z\,\vec b +  F\,\vec\beta, \sigma^2\mathbb{1}\right)\quad \text{with }
+\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
-where $\vec b$ and $\vec\beta$ are the vectors of fixed and random effect coefficients,
+where $\vec\beta$ and $\vec b$ are the vectors of fixed and random effect coefficients,
 $F$ and $Z$ are the fixed and random effect system matrices respectively. Finally,
 $\Sigma_{\vec \theta}$ is the random effect covariance parameterized by the variance components in
 $\vec \theta$.
@@ -31,8 +31,8 @@ into some correlation matrix $\Gamma_{\vec \theta}$ parameterized by some additi
 components in $\vec \theta$. Thus an LMM describing some correlated observations would
 change to
 $$
-\vec y \sim \mathcal{N}\left(Z\,\vec\beta +  F\,\vec b, \sigma^2\Gamma_{\vec \theta}\right)\quad \text{with }
-\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+\vec y \sim \mathcal{N}\left(Z\,\vec b +  F\,\vec\beta, \sigma^2\Gamma_{\vec \theta}\right)\quad \text{with }
+\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
 Usually, $\Gamma$ will be relatively dense and usually of full rank. In numerical terms: it is
 an *expensive* matrix.
@@ -40,10 +40,10 @@ an *expensive* matrix.
 *Pre-whitening*, now, is the black magic that turns the $\Gamma$-matrix back into a unit matrix.
 That is, we search for a matrix $W_{\vec \theta}$ that we throw on the LMM and data
 $$
-W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec\beta +
-   W_{\vec \theta}\,F\,\vec b,
+W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec b +
+   W_{\vec \theta}\,F\,\vec\beta,
    \sigma^2W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T\right)\quad \text{with }
-\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
 such that $\mathbb{1} = W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T$. In fact this is
 quiet easy to do: The so-called Cholesky factorization $L\,L^T = \Gamma$ provides a
