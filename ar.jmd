@@ -4,22 +4,64 @@ author: "H. Matuschek"
 date: 2020-02-13
 ---
 
-```julia
-using LinearAlgebra
-using BenchmarkTools
-using BandedMatrices: pbtrf!
-include("ar.jl")
+```julia; echo=false
+# Load some libraries and the code
+using LinearAlgebra;
+using BenchmarkTools;
+include("ar.jl");
 ```
 
-# Intro
-Consider the observed stationary $AR(p)$ process
+Frequently, the assumption of i.i.d. residuals is simply wrong. E.g., fitting LMMs to time-series
+data. It is reasonable to assume that there are at least some correlations present between
+consecutive observations within trials. Typical example are EEG experiments or even the famous
+lme4::sleepstudy dataset.
+
+A *normal* LMM describes the data $\vec y$ in terms of a multivariate Gaussian distribution. That is,
+$$
+\vec y \sim \mathcal{N}\left(Z\,\vec\beta +  F\,\vec b, \sigma^2\mathbb{1}\right)\quad \text{with }
+\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+$$
+where $\vec b$ and $\vec\beta$ are the vectors of fixed and random effect coefficients,
+$F$ and $Z$ are the fixed and random effect system matrices respectively. Finally,
+$\Sigma_{\vec \theta}$ is the random effect covariance parameterized by the variance components in
+$\vec \theta$.
+
+Whenever there are within-trial correlations present, the unit-matrix ($\mathbb{1}$) will turn
+into some correlation matrix $\Gamma_{\vec \theta}$ parameterized by some additional variance
+components in $\vec \theta$. Thus an LMM describing some correlated observations would
+change to
+$$
+\vec y \sim \mathcal{N}\left(Z\,\vec\beta +  F\,\vec b, \sigma^2\Gamma_{\vec \theta}\right)\quad \text{with }
+\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+$$
+Usually, $\Gamma$ will be relatively dense and usually of full rank. In numerical terms: it is
+an *expensive* matrix.
+
+*Pre-whitening*, now, is the black-magic that turns that $\Gamma$-matrix back into a unit matrix.
+That is, we search for a matrix $W_{\vec \theta}$ that we throw on the LMM and data
+$$
+W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec\beta +
+   W_{\vec \theta}\,F\,\vec b,
+   \sigma^2W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T\right)\quad \text{with }
+\vec\beta \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+$$
+such that $\mathbb{1} = W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T$.
+
+
+# Mathematical introduction
+Unsurprisingly, this matrix cannot be obtained in general without any assumptions about the
+underlying process that generated these correlated samples. A frequent choice for such a random
+process are *auto-regressive* processes. A so-called auto-regressive process of order $p$ (in short
+$AR(p)$-process) describes the time-series in terms of a linear combination of its own past of $p$
+step plus additive noise
 $$
  x_n = \phi_1\,x_{n-1} + \cdots + \phi_p\,x_{n-p} + \epsilon_n = \sum_{i=1}^p\phi_ix_{n-i}+\epsilon_n\,,
 $$
 where $E[\epsilon_n] = 0$ and $E[\epsilon_n\,\epsilon_m] = \sigma^2\delta_{n,m}$.
 
 The observed process is a convolution of noise with a filter-kernel $\phi_{-i}$. The associated
-de-convolution operation can be expressed as
+deconvolution/whitening operation can be expressed simply by subtracting the time-series with the
+weighted sum of its own past.
 $$
  \epsilon_n = x_n - \sum_{i=1}^p\phi_ix_{n-i}
 $$
@@ -28,15 +70,15 @@ $$
  \epsilon_n = \sum_{i=0}^p-\phi_i\,x_{n-i}\,.
 $$
 
-To this end, the de-convolution/whitening of the process is performed by a matrix $F_{n,i}$ of the
+To this end, the de-convolution/whitening of the process is performed by a matrix $W_{n,i}$ of the
 form
 $$
- F_{n,i} = \begin{cases} 0 & i>n \\ 1 & i=n \\ -\phi_{n-i} & (n-p)\le i < n \\  0 & i < (n-p)\end{cases}
+ W_{n,i} = \begin{cases} 0 & i>n \\ 1 & i=n \\ -\phi_{n-i} & (n-p)\le i < n \\  0 & i < (n-p)\end{cases}
 $$
 
 As a brief side note: Please observe that
 $$
- E[\epsilon_n\,\epsilon_m] = F_{n,i}\, \underbrace{E[x_i\,x_j]}_{: = \Gamma_{i,j}}\, \left(F_{m,j}\right)^T: =\sigma^2\mathbb{1}
+ E[\epsilon_n\,\epsilon_m] = W_{n,i}\, \underbrace{E[x_i\,x_j]}_{: = \Gamma_{i,j}}\, \left(W_{m,j}\right)^T: =\sigma^2\mathbb{1}
 $$
 
 This leads directly to a problem whitening the first $p$ samples of an stationary process in
@@ -51,7 +93,7 @@ implicit assumption that $x_{i}=0\,\forall i\le 0$.
 
 ```julia
 ϕ = [0.5]
-F(5, ϕ, false)
+W(5, ϕ, false)
 ```
 
 # Concrete Example $AR(1)$
@@ -60,9 +102,9 @@ $$
  x_n = \phi x_{n-1} + \epsilon_n
 $$
 
-The whitening matrix $F$ would be
+The whitening matrix $W$ would be
 $$
- F = \left(\begin{array}{cccccc}
+ W = \left(\begin{array}{cccccc}
    1 & 0 & 0 & 0 & \cdots & 0 \\
    -\phi & 1 & 0 & 0 &\cdots & 0 \\
    0 & -\phi & 1 & 0 &\cdots & 0 \\
@@ -72,12 +114,12 @@ $$
    \end{array}\right)
 $$
 
-Again, simply multiplying the vector of observations $\vec x$ on $F$ from the left would imply
+Again, simply multiplying the vector of observations $\vec x$ on $W$ from the left would imply
 the assumption that $x_{0}=0$.
 
 Under the assumption of an stationary GP in steady state, the auto-correlation of the process is
 fully specifies by the auto-correlation function. For an $AR(1)$-process with $0<\phi_1<1$ this
-auto-correlation can be obtained by means of the Youle-Walker equations as
+auto-correlation can be obtained by means of the Yule-Walker equations as
 $$
  \rho(0) = 1,\quad \rho(n) = \phi\,\rho(n-1)\Rightarrow \rho(n) = \phi^n\,.
 $$
@@ -95,14 +137,14 @@ $$
 
 With the relation observed above, one should find
 $$
- \mathbb 1_{n,m} = F_{n,i}\,\Gamma_{i,j}\left(F_{m,j}\right)^T
+ \mathbb 1_{n,m} = W_{n,i}\,\Gamma_{i,j}\left(W_{m,j}\right)^T
 $$
 
 ```julia
-f = F(5, ϕ, false)
+w = W(5, ϕ, false)
 Γ = Γ_ar(5, ϕ)
-E = Symmetric(BandedMatrix(f * Γ * transpose(f), (length(ϕ),length(ϕ))))
-map(x->round(x,digits=2),E)
+E = Symmetric(BandedMatrix(w * Γ * transpose(w), (length(ϕ),length(ϕ))))
+map(x->round(x,digits=2), E)
 ```
 
 The *mistakes* are limited to a band with band-width equal to the order of the
@@ -111,19 +153,19 @@ the whitening matrix $F$.
 
 ```julia
 E = cholesky(E);
-fc = E.L \ Matrix(f);
-map(x->round(x,digits=5), fc * Γ * transpose(fc))
+wc = E.L \ Matrix(w);
+map(x->round(x,digits=5), wc * Γ * transpose(wc))
 ```
 
 ```julia
-fc
+wc
 ```
 
 This correction is implemented inside the $F$ function when the *correction* argument is set to
 true (default). Thus
 ```julia
-f = F(5, ϕ)
-(f * Γ * transpose(f))
+w = W(5, ϕ)
+(w * Γ * transpose(w))
 ```
 yields the correct whitening matrix immediately.
 
@@ -131,32 +173,11 @@ yields the correct whitening matrix immediately.
 ```julia
 n = 10
 ϕ = [0.5, -0.25]
-f = F(n, ϕ)
-map(x->round(x,digits=2), f)
+w = W(n, ϕ)
+map(x->round(x,digits=2), w)
 ```
 
 ```julia
-E = f * Γ_ar(n, ϕ) * transpose(f)
+E = w * Γ_ar(n, ϕ) * transpose(w)
 map(x->round(x,digits=5), E)
-```
-
-# Brief benchmark
-Proper benchmarking is hard! Consider this as an example on how not to benchmark:
-```julia
-n = 1000
-ϕ = [0.5, -0.25, 0.1]
-@benchmark F(n, ϕ)
-@benchmark F(n, ϕ, false)
-
-f = F(n, ϕ, false)
-p = length(ϕ)
-@benchmark Γ_ar(n, ϕ)
-G = Γ_ar(n, ϕ)
-@benchmark Symmetric(f * G * transpose(f))
-
-Ef = Symmetric(f * G * transpose(f))
-Eb = Symmetric(BandedMatrix(Ef, (p,p)))
-
-@benchmark cholesky(Ef)
-@benchmark cholesky(Eb)
 ```

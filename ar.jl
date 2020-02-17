@@ -40,7 +40,7 @@ function Γ_ar(n, ϕ::Array{T}) where {T}
 end
 
 
-function F(n, ϕ::Array{T}, stationary=true) where {T}
+function W(n, ϕ::Array{T}, stationary=true) where {T}
   p = length(ϕ);
   # Actually, it will be a lower-band matrix with band-with equal to p
   M = BandedMatrix(zeros(T, n, n), (p,0));
