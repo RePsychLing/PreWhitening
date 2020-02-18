@@ -13,13 +13,13 @@ include("ar.jl");
 
 Frequently, the assumption of i.i.d. residuals is simply wrong. E.g., fitting LMMs to time-series
 data. It is reasonable to assume that there are at least some correlations present between
-consecutive observations within trials. Typical example are EEG experiments or even the famous
+consecutive observations within trials. Typical examples are EEG experiments or even the famous
 lme4::sleepstudy dataset.
 
-A *normal* LMM describes the data $\vec y$ in terms of a multivariate Gaussian distribution. That is,
+A *normal* LMM describes data $\vec y$ in terms of a multivariate Gaussian distribution. That is,
 $$
-\vec y \sim \mathcal{N}\left(Z\,\vec b +  F\,\vec\beta, \sigma^2\mathbb{1}\right)\quad \text{with }
-\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+\vec y|(\mathcal{B}=\vec b) \sim \mathcal{N}\left(X\,\vec\beta + Z\,\vec b, \sigma^2\mathbb{1}\right)\quad \text{with }
+\mathcal{B} \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
 where $\vec\beta$ and $\vec b$ are the vectors of fixed and random effect coefficients,
 $F$ and $Z$ are the fixed and random effect system matrices respectively. Finally,
@@ -27,23 +27,23 @@ $\Sigma_{\vec \theta}$ is the random effect covariance parameterized by the vari
 $\vec \theta$.
 
 Whenever there are within-trial correlations present, the unit-matrix ($\mathbb{1}$) will turn
-into some correlation matrix $\Gamma_{\vec \theta}$ parameterized by some additional variance
-components in $\vec \theta$. Thus an LMM describing some correlated observations would
+into a correlation matrix $\Gamma_{\vec \theta}$ parameterized by some additional variance
+components in $\vec \theta$. Thus an LMM describing correlated observations would
 change to
 $$
-\vec y \sim \mathcal{N}\left(Z\,\vec b +  F\,\vec\beta, \sigma^2\Gamma_{\vec \theta}\right)\quad \text{with }
-\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+\vec y|(\mathcal{B}=\vec b) \sim \mathcal{N}\left(X\,\vec\beta + Z\,\vec b, \sigma^2\Gamma_{\vec \theta}\right)\quad \text{with }
+\mathcal{B} \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
-Usually, $\Gamma$ will be relatively dense and usually of full rank. In numerical terms: it is
+Usually, $\Gamma$ will be relatively dense and of full rank. In numerical terms: it is
 an *expensive* matrix.
 
 *Pre-whitening*, now, is the black magic that turns the $\Gamma$-matrix back into a unit matrix.
 That is, we search for a matrix $W_{\vec \theta}$ that we throw on the LMM and data
 $$
-W_{\vec \theta}\,\vec y \sim \mathcal{N}\left(W_{\vec \theta}\,Z\,\vec b +
-   W_{\vec \theta}\,F\,\vec\beta,
-   \sigma^2W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T\right)\quad \text{with }
-\vec b \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
+W_{\vec \theta}\,\vec y|(\mathcal{B}=\vec b) \sim \mathcal{N}\left(W_{\vec \theta}\,X\,\vec\beta +
+  W_{\vec \theta}\,Z\,\vec b,
+  \sigma^2W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T\right)\quad \text{with }
+\mathcal{B} \sim \mathcal{N}\left(\vec 0, \Sigma_{\vec \theta}\right)\,,
 $$
 such that $\mathbb{1} = W_{\vec \theta}\,\Gamma_{\vec \theta}\,W_{\vec \theta}^T$. In fact this is
 quiet easy to do: The so-called Cholesky factorization $L\,L^T = \Gamma$ provides a
@@ -57,7 +57,7 @@ pre-whitening by means of Cholesky factorization of the complete covariance matr
 whenever samples are taken irregularly of if samples are missing.
 
 # Mathematical introduction
-Unsurprisingly, the covariance matrix $\Gamma$ cannot be obtained in general without any assumptions about the
+Unsurprisingly, the covariance matrix $\Gamma$ cannot be obtained without any assumptions about the
 underlying process that generated these correlated samples. A frequent choice for such a random
 process are *auto-regressive* processes. A so-called auto-regressive process of order $p$ (in short
 $AR(p)$-process) describes the time-series in terms of a linear combination of its own past of $p$
@@ -75,7 +75,7 @@ $$
 $$
 with $\phi_0=-1$, one obtains
 $$
- \epsilon_n = \sum_{i=0}^p-\phi_i\,x_{n-i}\,.
+ \epsilon_n = -\sum_{i=0}^p\phi_i\,x_{n-i}\,.
 $$
 
 To this end, the de-convolution/whitening of the process is performed by a matrix $W_{n,i}$ of the
@@ -182,15 +182,30 @@ w = W(5, ϕ)
 yields the correct whitening matrix immediately.
 
 ## Brief example for an $AR(3)$
+Given the coefficents $\vec \phi$ for an $AR(3)$ process, the whitening matrix $W$ is
+obtained using the $W()$ function
 ```julia
 ϕ = [0.5, -0.25, 0.1];
-w = W(5, ϕ, false);
-Γ = Γ_ar(5, ϕ);
-E = Symmetric(BandedMatrix(w * Γ * transpose(w), (length(ϕ),length(ϕ))));
-map(x->round(x,digits=2), E)
+# get uncorrected whitening matrix
+w = W(10, ϕ)
 ```
-```julia
-E = cholesky(E);
-wc = E.L \ Matrix(w);
-map(x->round(x,digits=5), wc * Γ * transpose(wc))
+This is again a lower-banded matrix where there are at most $p$ sub-diagonals. And multiplying this
+sparse matrix to the observations as well as to the entire model will not increase the
+computational costs significantly.
+
+# Possible UI
+There are basically two ways one could extend the formula syntax.
+
+The first would mimic an additional *random effect*, although it is not implemented as one:
+```julia eval = false
+f = @formula y ~ 1 + A + (1+B|Subj) + AR(p, t, Subj/Trial)
 ```
+This form might be the easiest way to implement pre-whitening into the existing formula macro.
+
+
+Although, a more mathematically correct form could be
+```julia eval = false
+f =  @formula AR(2, y ~ 1 + A + (1+B|Subj), t, Subj/Trial)
+```
+the latter, however is would break the current implementation of the formula macro and is harder
+to read.
